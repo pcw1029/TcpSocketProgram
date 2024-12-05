@@ -60,7 +60,7 @@ protected:
         }
 
         // 서버 소켓 생성
-        iServerSock = createServerSocket(kiPort, kiMaxClients);
+        iServerSock = createTcpServerSocket(kiPort, kiMaxClients);
         ASSERT_GE(iServerSock, 0) << "Server socket creation failed.";
     }
 
@@ -100,7 +100,7 @@ TEST_F(TcpSocketTest, CreateClientSocket) {
     });
 
     // 클라이언트 소켓 생성 및 서버에 연결 시도
-    int _iClientSocket = createClientSocket("127.0.0.1", kiPort);
+    int _iClientSocket = createTcpClientSocket("127.0.0.1", kiPort);
     ASSERT_GE(_iClientSocket, 0) << "Failed to create client socket.";
 
     // 서버가 클라이언트를 수락하도록 약간의 대기 시간 부여
@@ -159,7 +159,7 @@ TEST_F(TcpSocketTest, HandleClientDisconnection) {
     });
 
     // 클라이언트 소켓 생성 및 서버에 연결
-    int _iClientSsock = createClientSocket("127.0.0.1", kiPort);
+    int _iClientSsock = createTcpClientSocket("127.0.0.1", kiPort);
     ASSERT_GE(_iClientSsock, 0) << "Failed to create client socket.";
 
     // 서버가 클라이언트를 수락하도록 대기
@@ -196,7 +196,7 @@ TEST_F(TcpSocketTest, ClientSendWithoutServerResponse) {
     });
 
     // 클라이언트 소켓 생성 및 서버에 연결
-    int _iClientSsock = createClientSocket("127.0.0.1", kiPort);
+    int _iClientSsock = createTcpClientSocket("127.0.0.1", kiPort);
     ASSERT_GE(_iClientSsock, 0) << "Failed to create client socket.";
 
     // 서버가 클라이언트를 수락하도록 대기

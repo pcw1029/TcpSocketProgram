@@ -25,7 +25,7 @@
  * 
  * @return 서버 소켓에 대한 파일 디스크립터를 반환.
  */
-int createServerSocket(int, int);
+int createTcpServerSocket(int, int);
 
 /**
  * @brief 클라이언트 소켓을 생성하여 서버에 연결합니다.
@@ -35,7 +35,7 @@ int createServerSocket(int, int);
  * 
  * @return 생성된 클라이언트 소켓 파일 디스크립터를 반환. 실패 시 -1을 반환합니다.
  */
-int createClientSocket(const char*, int);
+int createTcpClientSocket(const char*, int);
 
 /**
  * @brief 클라이언트 연결 해제 처리
@@ -44,7 +44,7 @@ int createClientSocket(const char*, int);
  * 
  * @param iClientSockfd 연결이 해제된 클라이언트 소켓 파일 디스크립터
  */
-void handleClientDisconnection(int);
+void handleTcpClientDisconnection(int);
 
 /**
  * @brief 클라이언트 연결 상태 확인
@@ -54,7 +54,7 @@ void handleClientDisconnection(int);
  * @param piClientSockets 클라이언트 소켓 파일 디스크립터 배열
  * @param iMaxClients 최대 클라이언트 수
  */
-void checkClientConnections(int*, int);
+void checkTcpClientConnections(int*, int);
 
 /**
  * @brief 소켓의 RX 및 TX 버퍼 크기를 설정합니다.
@@ -63,6 +63,6 @@ void checkClientConnections(int*, int);
  * @param iRxSize 수신 버퍼 크기 (바이트 단위)
  * @param iTxSize 송신 버퍼 크기 (바이트 단위)
  */
-void setSocketBufferSize(int, int, int);
+void setTcpSocketBufferSize(int, int, int);
 
 #endif

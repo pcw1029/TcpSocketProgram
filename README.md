@@ -76,14 +76,21 @@
    cd tcp-server-client
    ```
 
+   
+
 2. 프로그램을 빌드합니다:
 
    ```bash
    make
-   
-   google test을 위한 빌드는 
-   make gtest
    ```
+
+   1. 단위테스트(google test)를 위한 빌드를 합니다. 이 빌드는 구글테스트를 위한 빌드입니다. 
+
+      ```bash
+      make gtest
+      ```
+
+      
 
 3. 빌드 후 생성되는 실행 파일:
 
@@ -106,7 +113,7 @@
 
 3. 연결 및 데이터 송수신 로그가 출력됩니다.
 
-4. 
+   
 
 ### 클라이언트 실행:
 
@@ -124,3 +131,24 @@
 
 ## 예제
 
+### 서버 실행
+
+![server1](images/server1.png)
+
+
+
+### 클라이언트 실행
+
+![client1](images/client1.png)
+
+
+
+### 2개의 클라이언트가 접속했을때 서버 화면
+
+![server2](images/server2.png)
+
+
+
+### 메시지 전송 후 timeout에 의해 종료
+
+![serverAndClient](images/serverAndClient.png)
