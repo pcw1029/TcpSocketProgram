@@ -49,7 +49,7 @@ void *sendMessages(void *sock) {
         }
         pthread_mutex_unlock(&uRunningMutex);
 
-        printf("Enter message (type 'exit' to quit): ");
+        printf("Enter message('exit' to quit): ");
 
         // 입력 대기를 타임아웃 처리하기 위해 select() 사용
         fd_set stReadFds;
@@ -107,16 +107,16 @@ void *receiveMessages(void *sock) {
         pthread_mutex_unlock(&uRunningMutex);
 
         // select()를 사용하여 소켓이 읽기 가능한지 확인
-        fd_set readfds;
-        struct timeval timeout;
+        fd_set stReadFds;
+        struct timeval stTimeout;
 
-        FD_ZERO(&readfds);
-        FD_SET(iSock, &readfds);
+        FD_ZERO(&stReadFds);
+        FD_SET(iSock, &stReadFds);
 
-        timeout.tv_sec = TIMEOUT_SEC;
-        timeout.tv_usec = 0;
+        stTimeout.tv_sec = TIMEOUT_SEC;
+        stTimeout.tv_usec = 0;
 
-        int activity = select(iSock + 1, &readfds, NULL, NULL, &timeout);
+        int activity = select(iSock + 1, &stReadFds, NULL, NULL, &stTimeout);
 
         if (activity < 0) {
             perror("Select error");
@@ -132,7 +132,7 @@ void *receiveMessages(void *sock) {
             pthread_exit(NULL);
         }
 
-        if (FD_ISSET(iSock, &readfds)) {
+        if (FD_ISSET(iSock, &stReadFds)) {
             int iReadSize = read(iSock, achBuffer, BUFFER_SIZE);
             if (iReadSize > 0) {
                 achBuffer[iReadSize] = '\0';
@@ -161,7 +161,7 @@ int main() {
     pthread_t sendThread, receiveThread;
 
     while(1){
-        iSock = createClientSocket(SERVER_IP, PORT);
+        iSock = createTcpClientSocket(SERVER_IP, PORT);
         if (iSock < 0) {
             printf("Failed to connect to server\n");
             return -1;

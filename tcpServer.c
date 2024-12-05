@@ -60,7 +60,7 @@ void *receiveThread(void *arg) {
             } else {
                 perror("Read error");
             }
-            handleClientDisconnection(pstClientInfo->iClientSock);
+            handleTcpClientDisconnection(pstClientInfo->iClientSock);
             pstClientInfo->iClientSock = 0;
             pthread_exit(NULL);
         } else {
@@ -98,7 +98,7 @@ int main() {
     fd_set stReadFds;
     CLIENT_INFO stClientInfo[MAX_CLIENTS] = {0};
 
-    iServerSock = createServerSocket(PORT, MAX_CLIENTS);
+    iServerSock = createTcpServerSocket(PORT, MAX_CLIENTS);
     printf("Server listening on port %d\n", PORT);
 
     while (1) {
@@ -153,7 +153,7 @@ int main() {
                             inet_ntoa(stSockClientAddr.sin_addr), \
                             ntohs(stSockClientAddr.sin_port));
 
-                    handleClientDisconnection(iSock);
+                    handleTcpClientDisconnection(iSock);
                     stClientInfo[i].iClientSock = 0;
                 }
             }
