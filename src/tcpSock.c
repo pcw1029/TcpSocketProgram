@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int createServerSocket(int iPort, int iMaxClients)
+int createTcpServerSocket(int iPort, int iMaxClients)
 {
     int iServerSock;
     struct sockaddr_in stSockAddr;
@@ -46,17 +46,17 @@ int createServerSocket(int iPort, int iMaxClients)
     }
 
     // TCP Keep-Alive 설정 추가
-    int keepalive = 1;
-    int keepidle = 10; // 첫 번째 Keep-Alive 패킷을 보내기까지의 대기 시간 (초)
-    int keepinterval = 5; // 각 Keep-Alive 패킷 간의 간격 (초)
-    int keepcount = 3; // 연결이 끊어졌다고 간주하기 전까지의 최대 Keep-Alive 패킷 수
+    int iKeepAlive = 1;
+    int iKeepIdle = 10; // 첫 번째 Keep-Alive 패킷을 보내기까지의 대기 시간 (초)
+    int iKeepInterval = 5; // 각 Keep-Alive 패킷 간의 간격 (초)
+    int iKeepCount = 3; // 연결이 끊어졌다고 간주하기 전까지의 최대 Keep-Alive 패킷 수
 
     /**
      * @brief 클라이언트가 여전히 연결되어 있는지 확인하기 위해 TCP Keep-Alive를 활성화합니다.
      * 
      * SO_KEEPALIVE: 소켓에서 Keep-Alive 메시지를 활성화합니다.
      */
-    if (setsockopt(iServerSock, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive)) < 0) {
+    if (setsockopt(iServerSock, SOL_SOCKET, SO_KEEPALIVE, &iKeepAlive, sizeof(iKeepAlive)) < 0) {
         perror("Setsockopt SO_KEEPALIVE failed");
         exit(EXIT_FAILURE);
     }
@@ -65,7 +65,7 @@ int createServerSocket(int iPort, int iMaxClients)
      * 
      * TCP_KEEPIDLE: Keep-Alive 프로브를 보내기 전까지 대기할 시간(초)입니다.
      */
-    if (setsockopt(iServerSock, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) < 0) {
+    if (setsockopt(iServerSock, IPPROTO_TCP, TCP_KEEPIDLE, &iKeepIdle, sizeof(iKeepIdle)) < 0) {
         perror("Setsockopt TCP_KEEPIDLE failed");
         exit(EXIT_FAILURE);
     }
@@ -74,7 +74,7 @@ int createServerSocket(int iPort, int iMaxClients)
      * 
      * TCP_KEEPINTVL: 각 Keep-Alive 프로브 간의 시간 간격(초)입니다.
      */
-    if (setsockopt(iServerSock, IPPROTO_TCP, TCP_KEEPINTVL, &keepinterval, sizeof(keepinterval)) < 0) {
+    if (setsockopt(iServerSock, IPPROTO_TCP, TCP_KEEPINTVL, &iKeepInterval, sizeof(iKeepInterval)) < 0) {
         perror("Setsockopt TCP_KEEPINTVL failed");
         exit(EXIT_FAILURE);
     }
@@ -83,7 +83,7 @@ int createServerSocket(int iPort, int iMaxClients)
      * 
      * TCP_KEEPCNT: 연결이 끊겼다고 선언하기 전 실패한 Keep-Alive 프로브의 수입니다.
      */
-    if (setsockopt(iServerSock, IPPROTO_TCP, TCP_KEEPCNT, &keepcount, sizeof(keepcount)) < 0) {
+    if (setsockopt(iServerSock, IPPROTO_TCP, TCP_KEEPCNT, &iKeepCount, sizeof(iKeepCount)) < 0) {
         perror("Setsockopt TCP_KEEPCNT failed");
         exit(EXIT_FAILURE);
     }
@@ -105,7 +105,7 @@ int createServerSocket(int iPort, int iMaxClients)
     return iServerSock;
 }
 
-int createClientSocket(const char *kpchIp, int iPort) {
+int createTcpClientSocket(const char *kpchIp, int iPort) {
     int iSock;
     struct sockaddr_in stSockServAddr;
 
@@ -130,19 +130,19 @@ int createClientSocket(const char *kpchIp, int iPort) {
     return iSock;
 }
 
-void handleClientDisconnection(int iClientSockfd) {
+void handleTcpClientDisconnection(int iClientSockfd) {
     printf("Client disconnected, closing socket\n");
     close(iClientSockfd);
 }
 
-void checkClientConnections(int *piClientSockets, int iMaxClients) {
+void checkTcpClientConnections(int *piClientSockets, int iMaxClients) {
     for (int i = 0; i < iMaxClients; i++) {
         if (piClientSockets[i] != 0) {
             char buffer[1];
             int result = recv(piClientSockets[i], buffer, sizeof(buffer), MSG_PEEK | MSG_DONTWAIT);
             if (result == 0) {
                 printf("Client socket %d appears to have disconnected\n", piClientSockets[i]);
-                handleClientDisconnection(piClientSockets[i]);
+                handleTcpClientDisconnection(piClientSockets[i]);
                 piClientSockets[i] = 0;
             }
         }
@@ -150,7 +150,7 @@ void checkClientConnections(int *piClientSockets, int iMaxClients) {
 }
 
 
-void setSocketBufferSize(int iSock, int iRxSize, int iTxSize) 
+void setTcpSocketBufferSize(int iSock, int iRxSize, int iTxSize) 
 {
     if (setsockopt(iSock, SOL_SOCKET, SO_RCVBUF, &iRxSize, sizeof(iRxSize)) < 0) {
         perror("Setsockopt SO_RCVBUF failed");
