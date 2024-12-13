@@ -16,8 +16,19 @@
 #include <sys/types.h>
 #include <sys/select.h>
 #include <errno.h>  // errno 사용을 위해 추가
+#include <stdbool.h>
+#include <sys/time.h>
 
 #define PORT 8080
+
+
+// 공유 데이터 구조체
+typedef struct {
+    char chData[BUFFER_SIZE];
+    bool hasData;                // 데이터가 존재하는지 확인하는 플래그
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;         // 조건 변수
+} SHARED_DATA;
 
 /**
  * @brief 클라이언트 정보를 저장하는 구조체.
@@ -25,10 +36,14 @@
  */
 typedef struct {
     int iClientSock;                ///< 클라이언트 소켓 파일 디스크립터
-    char achBuffer[BUFFER_SIZE];    ///< 클라이언트와의 데이터 송수신을 위한 버퍼
+    bool bExitFlag;    
+    SHARED_DATA stSharedData;
     pthread_t recvThreadId;         ///< 데이터 수신 스레드 ID
-    pthread_t sendThreadId;         ///< 데이터 송신 스레드 ID
+    pthread_t sendThreadId;         ///< 데이터 송신 스레드 ID 
+
+    pthread_mutex_t exitFlagMutex;
 } CLIENT_INFO;
+
 
 /**
  * @brief 클라이언트로부터 데이터를 수신하는 스레드 함수입니다.
@@ -43,6 +58,10 @@ void *receiveThread(void *arg) {
     CLIENT_INFO *pstClientInfo = (CLIENT_INFO *)arg;
     struct sockaddr_in stSockClientAddr;
     socklen_t uiClientAddrLen = sizeof(stSockClientAddr);
+    char achBuffer[BUFFER_SIZE];
+    fd_set stReadFds;
+    struct timeval stTimeout;
+    sleep(1);
 
     if (getpeername(pstClientInfo->iClientSock, (struct sockaddr *)&stSockClientAddr, &uiClientAddrLen) == -1) {
         perror("getpeername failed");
@@ -50,24 +69,49 @@ void *receiveThread(void *arg) {
     }
 
     while (1) {
-        int iReadSize = read(pstClientInfo->iClientSock, pstClientInfo->achBuffer, BUFFER_SIZE);
-        if (iReadSize <= 0) {
-            if (iReadSize == 0) {
-                getpeername(pstClientInfo->iClientSock, (struct sockaddr *)&stSockClientAddr, &uiClientAddrLen);
-                printf("Host disconnected, socket ip is : %s, port : %d\n", \
-                        inet_ntoa(stSockClientAddr.sin_addr), \
-                        ntohs(stSockClientAddr.sin_port));
+        FD_ZERO(&stReadFds);
+        FD_SET(pstClientInfo->iClientSock, &stReadFds);
+
+        stTimeout.tv_sec = 0;
+        stTimeout.tv_usec = 500*1000;
+        int activity = select(pstClientInfo->iClientSock + 1, &stReadFds, NULL, NULL, &stTimeout);
+        if (activity < 0) {
+            perror("Select error");            
+            break;
+        } else if (activity != 0) {
+            memset(achBuffer, 0x0, BUFFER_SIZE);
+            int iReadSize = read(pstClientInfo->iClientSock, achBuffer, BUFFER_SIZE);
+            if (iReadSize <= 0) {
+                if (iReadSize == 0) {                    
+                    break;
+                } else {
+                    perror("Read error");
+                }
+                handleTcpClientDisconnection(pstClientInfo->iClientSock);
+                pstClientInfo->iClientSock = 0;
             } else {
-                perror("Read error");
+                achBuffer[iReadSize] = '\0';
+                pthread_mutex_lock(&pstClientInfo->stSharedData.mutex);
+                pstClientInfo->stSharedData.hasData = true;  // 데이터가 존재함을 알림
+                memset(pstClientInfo->stSharedData.chData, 0x0, BUFFER_SIZE);
+                memcpy(pstClientInfo->stSharedData.chData, achBuffer, strlen(achBuffer));
+                pthread_cond_signal(&pstClientInfo->stSharedData.cond);
+                pthread_mutex_unlock(&pstClientInfo->stSharedData.mutex);
+                printf("Received from client %d: %s\n", pstClientInfo->iClientSock, achBuffer);
+                usleep(100*1000);
             }
-            handleTcpClientDisconnection(pstClientInfo->iClientSock);
-            pstClientInfo->iClientSock = 0;
-            pthread_exit(NULL);
-        } else {
-            pstClientInfo->achBuffer[iReadSize] = '\0';
-            printf("Received from client %d: %s\n", pstClientInfo->iClientSock, pstClientInfo->achBuffer);
         }
     }
+    getpeername(pstClientInfo->iClientSock, (struct sockaddr *)&stSockClientAddr, &uiClientAddrLen);
+    printf("%s():%d Host disconnected, socket ip is : %s, port : %d\n", \
+            __func__,__LINE__, \
+            inet_ntoa(stSockClientAddr.sin_addr), \
+            ntohs(stSockClientAddr.sin_port));
+
+    pthread_mutex_lock(&pstClientInfo->exitFlagMutex);
+    pstClientInfo->bExitFlag = true;
+    pthread_mutex_unlock(&pstClientInfo->exitFlagMutex);
+    pthread_exit(NULL);
 }
 
 /**
@@ -80,14 +124,57 @@ void *receiveThread(void *arg) {
  */
 void *sendThread(void *arg) {
     CLIENT_INFO *pstClientInfo = (CLIENT_INFO *)arg;
+    struct sockaddr_in stSockClientAddr;
+    socklen_t uiClientAddrLen = sizeof(stSockClientAddr);
+    char achBuffer[BUFFER_SIZE];
+    bool bSendFlag=false;
+    bool bExitFlag=false;
+    struct timeval stNow;
+    struct timespec stTimeout; 
+
+    if (getpeername(pstClientInfo->iClientSock, (struct sockaddr *)&stSockClientAddr, &uiClientAddrLen) == -1) {
+        perror("getpeername failed");
+        pthread_exit(NULL);
+    }   
+
     while (1) {
-        if (strlen(pstClientInfo->achBuffer) > 0) {
-            write(pstClientInfo->iClientSock, pstClientInfo->achBuffer, strlen(pstClientInfo->achBuffer));
-            printf("Sent to client %d: %s\n", pstClientInfo->iClientSock, pstClientInfo->achBuffer);
-            memset(pstClientInfo->achBuffer, 0, BUFFER_SIZE); // 버퍼를 초기화하여 다음 데이터를 받을 준비를 합니다.
+        gettimeofday(&stNow, NULL);    
+        // 5초 대기 시간 설정
+        stTimeout.tv_sec = stNow.tv_sec + 1;
+        stTimeout.tv_nsec = stNow.tv_usec * 1000;
+        pthread_mutex_lock(&pstClientInfo->exitFlagMutex);
+        bExitFlag = pstClientInfo->bExitFlag;
+        pthread_mutex_unlock(&pstClientInfo->exitFlagMutex);
+        if(bExitFlag){
+            break;
         }
-        usleep(1000); // 송신 스레드의 과부하를 방지하기 위해 잠시 대기합니다.
+        // 데이터가 준비될 때까지 대기
+        int ret = pthread_cond_timedwait(&pstClientInfo->stSharedData.cond, &pstClientInfo->stSharedData.mutex, &stTimeout);
+        if (ret == ETIMEDOUT) {
+            fprintf(stderr,".");
+        }else{
+            //printf("Thread 2: 읽은 데이터: %s\n", pstClientInfo->stSharedData.chData);
+            memset(achBuffer, 0x0, BUFFER_SIZE);
+            // pthread_mutex_lock(&pstClientInfo->stSharedData.mutex);
+            pstClientInfo->stSharedData.hasData = false;// 데이터 사용 완료 플래그 초기화
+            memcpy(achBuffer, pstClientInfo->stSharedData.chData, strlen(pstClientInfo->stSharedData.chData));            
+            pthread_mutex_unlock(&pstClientInfo->stSharedData.mutex);
+            bSendFlag=true;
+        }
+        if(bSendFlag){
+            write(pstClientInfo->iClientSock, achBuffer, strlen(achBuffer));
+        }
+        bSendFlag=false;        
     }
+    getpeername(pstClientInfo->iClientSock, (struct sockaddr *)&stSockClientAddr, &uiClientAddrLen);
+    printf("%s():%d Host disconnected, socket ip is : %s, port : %d\n", \
+            __func__,__LINE__, \
+            inet_ntoa(stSockClientAddr.sin_addr), \
+            ntohs(stSockClientAddr.sin_port));
+    pthread_mutex_lock(&pstClientInfo->exitFlagMutex);
+    pstClientInfo->bExitFlag = true;
+    pthread_mutex_unlock(&pstClientInfo->exitFlagMutex);
+    pthread_exit(NULL);
 }
 
 int main() {
@@ -96,7 +183,7 @@ int main() {
     socklen_t uiClientAddrLen = sizeof(stSockClientAddr);
     
     fd_set stReadFds;
-    CLIENT_INFO stClientInfo[MAX_CLIENTS] = {0};
+    CLIENT_INFO stClientGroup[MAX_CLIENTS] = {0};
 
     iServerSock = createTcpServerSocket(PORT, MAX_CLIENTS);
     printf("Server listening on port %d\n", PORT);
@@ -107,7 +194,7 @@ int main() {
         int iMaxSock = iServerSock;
 
         for (int i = 0; i < MAX_CLIENTS; i++) {
-            int iSock = stClientInfo[i].iClientSock;
+            int iSock = stClientGroup[i].iClientSock;
             if (iSock > 0)
                 FD_SET(iSock, &stReadFds);
             if (iSock > iMaxSock)
@@ -131,30 +218,18 @@ int main() {
                         ntohs(stSockClientAddr.sin_port));
             
             for (int i = 0; i < MAX_CLIENTS; i++) {
-                if (stClientInfo[i].iClientSock == 0) {
-                    stClientInfo[i].iClientSock = iClientSock;
+                if (stClientGroup[i].iClientSock == 0) {
+                    stClientGroup[i].iClientSock = iClientSock;
+
+                    if (pthread_mutex_init(&stClientGroup[i].stSharedData.mutex, NULL) != 0) {
+                        perror("pthread_mutex_init 실패");                
+                    }
+                    stClientGroup[i].bExitFlag=false;
                     printf("Adding to list of sockets as %d\n", i);
-
                     // 수신 및 송신 스레드 생성
-                    pthread_create(&stClientInfo[i].recvThreadId, NULL, receiveThread, &stClientInfo[i]);
-                    pthread_create(&stClientInfo[i].sendThreadId, NULL, sendThread, &stClientInfo[i]);
+                    pthread_create(&stClientGroup[i].recvThreadId, NULL, receiveThread, &stClientGroup[i]);
+                    pthread_create(&stClientGroup[i].sendThreadId, NULL, sendThread, &stClientGroup[i]);
                     break;
-                }
-            }
-        }
-
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            int iSock = stClientInfo[i].iClientSock;
-            if (FD_ISSET(iSock, &stReadFds)) {
-                int iReadSize = read(iSock, stClientInfo[i].achBuffer, BUFFER_SIZE);
-                if (iReadSize == 0) {
-                    getpeername(iSock, (struct sockaddr *)&stSockClientAddr, &uiClientAddrLen);
-                    printf("Host disconnected, ip %s, port %d\n", \
-                            inet_ntoa(stSockClientAddr.sin_addr), \
-                            ntohs(stSockClientAddr.sin_port));
-
-                    handleTcpClientDisconnection(iSock);
-                    stClientInfo[i].iClientSock = 0;
                 }
             }
         }
