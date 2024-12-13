@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "select.h": "c",
+        "chrono": "c",
+        "errno.h": "c",
+        "pthread.h": "c"
+    }
+}
