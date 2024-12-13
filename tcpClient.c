@@ -25,27 +25,29 @@
 
 #define PORT 8080
 #define SERVER_IP "127.0.0.1"
-#define TIMEOUT_SEC 10  // 타임아웃 시간 (초)
 
 /**
  * @brief 클라이언트 정보를 저장하는 구조체.
- * @details 클라이언트 소켓, 송수신 버퍼, 수신 및 송신 스레드 ID를 포함.
+ * 
+ * @details 클라이언트 소켓, 송수신 버퍼, 수신 및 송신 스레드 ID를 포함하며,
+ *          클라이언트 상태를 관리하기 위한 플래그와 동기화를 위한 뮤텍스를 포함합니다.
  */
 typedef struct {
-    int iSock;                ///< 클라이언트 소켓 파일 디스크립터
-    bool bIsRunning;
-    char achBuffer[BUFFER_SIZE];    ///< 클라이언트와의 데이터 송수신을 위한 버퍼
-    pthread_t recvThreadId;         ///< 데이터 수신 스레드 ID
-    pthread_t sendThreadId;         ///< 데이터 송신 스레드 ID
-    pthread_mutex_t uRunningMutex;
+    int iSock;                      /**< 클라이언트 소켓 파일 디스크립터 */
+    bool bIsRunning;                /**< 클라이언트 실행 상태 플래그 */
+    char achBuffer[BUFFER_SIZE];    /**< 데이터 송수신을 위한 버퍼 */
+    pthread_t recvThreadId;         /**< 데이터 수신 스레드 ID */
+    pthread_t sendThreadId;         /**< 데이터 송신 스레드 ID */
+    pthread_mutex_t uRunningMutex;  /**< 실행 상태 동기화를 위한 뮤텍스 */
 } CLIENT_INFO;
 
 /**
  * @brief 메시지 송신을 담당하는 스레드 함수
  * 
- * 사용자가 입력한 메시지를 서버로 전송합니다.
+ * @details 사용자가 입력한 메시지를 서버로 전송합니다. 
+ *          "exit" 입력 시 클라이언트를 종료합니다.
  * 
- * @param sock 서버 소켓 파일 디스크립터에 대한 포인터
+ * @param pvData CLIENT_INFO 구조체 포인터
  * @return void*
  */
 void *sendMessages(void *pvData) {
@@ -94,17 +96,20 @@ void *sendMessages(void *pvData) {
 
     pthread_exit(NULL);
 }
+
 /**
  * @brief 메시지 수신을 담당하는 스레드 함수
  * 
- * 서버로부터 수신된 메시지를 출력하며, 일정 시간 동안 응답이 없을 경우 타임아웃을 처리합니다.
+ * @details 서버로부터 수신된 메시지를 출력하며, 일정 시간 동안 응답이 없을 경우 타임아웃을 처리합니다.
  * 
- * @param sock 서버 소켓 파일 디스크립터에 대한 포인터
+ * @param pvData CLIENT_INFO 구조체 포인터
  * @return void*
  */
 void *receiveMessages(void *pvData) {
     CLIENT_INFO* pstClientInfo = (CLIENT_INFO *)pvData;
     char achBuffer[BUFFER_SIZE];
+    fd_set stReadFds;
+    struct timeval stTimeout;
 
     while (1) {
         pthread_mutex_lock(&pstClientInfo->uRunningMutex);
@@ -113,10 +118,6 @@ void *receiveMessages(void *pvData) {
             break;
         }
         pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
-
-        // select()를 사용하여 소켓이 읽기 가능한지 확인
-        fd_set stReadFds;
-        struct timeval stTimeout;
 
         FD_ZERO(&stReadFds);
         FD_SET(pstClientInfo->iSock, &stReadFds);
@@ -159,6 +160,15 @@ void *receiveMessages(void *pvData) {
     pthread_exit(NULL);
 }
 
+/**
+ * @brief 메인 함수: TCP 클라이언트 소켓을 생성하고 서버와 통신을 처리
+ * 
+ * @details 클라이언트 소켓을 생성하여 서버와 연결을 시도합니다. 
+ *          연결이 성공하면 송신 및 수신 스레드를 생성하여 데이터를 처리하며,
+ *          연결 종료 후 재연결 여부를 사용자로부터 확인받습니다.
+ * 
+ * @return int 실행 결과
+ */
 int main() {
     CLIENT_INFO stClientInfo = {        \
                 .iSock = 0,             \
