@@ -21,13 +21,24 @@
 #include <unistd.h>
 #include <pthread.h>  // pthread 사용을 위해 추가
 #include <sys/select.h>  // select() 사용을 위해 추가
+#include <stdbool.h>
 
 #define PORT 8080
 #define SERVER_IP "127.0.0.1"
 #define TIMEOUT_SEC 10  // 타임아웃 시간 (초)
 
-volatile int g_iIsRunning = 0;  // 프로그램 종료 플래그
-pthread_mutex_t uRunningMutex = PTHREAD_MUTEX_INITIALIZER;  // running 플래그 보호를 위한 뮤텍스
+/**
+ * @brief 클라이언트 정보를 저장하는 구조체.
+ * @details 클라이언트 소켓, 송수신 버퍼, 수신 및 송신 스레드 ID를 포함.
+ */
+typedef struct {
+    int iSock;                ///< 클라이언트 소켓 파일 디스크립터
+    bool bIsRunning;
+    char achBuffer[BUFFER_SIZE];    ///< 클라이언트와의 데이터 송수신을 위한 버퍼
+    pthread_t recvThreadId;         ///< 데이터 수신 스레드 ID
+    pthread_t sendThreadId;         ///< 데이터 송신 스레드 ID
+    pthread_mutex_t uRunningMutex;
+} CLIENT_INFO;
 
 /**
  * @brief 메시지 송신을 담당하는 스레드 함수
@@ -37,28 +48,25 @@ pthread_mutex_t uRunningMutex = PTHREAD_MUTEX_INITIALIZER;  // running 플래그
  * @param sock 서버 소켓 파일 디스크립터에 대한 포인터
  * @return void*
  */
-void *sendMessages(void *sock) {
-    int iSock = *(int *)sock;
+void *sendMessages(void *pvData) {
+    CLIENT_INFO* pstClientInfo = (CLIENT_INFO *)pvData;
     char achBuffer[BUFFER_SIZE];
-
+    // 입력 대기를 타임아웃 처리하기 위해 select() 사용
+    fd_set stReadFds;
+    struct timeval stTimeout;
+    fprintf(stderr,"Enter message('exit' to quit): ");
     while (1) {
-        pthread_mutex_lock(&uRunningMutex);
-        if (!g_iIsRunning) {
-            pthread_mutex_unlock(&uRunningMutex);
+        pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+        if (!pstClientInfo->bIsRunning) {
+            pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
             break;
         }
-        pthread_mutex_unlock(&uRunningMutex);
-
-        printf("Enter message('exit' to quit): ");
-
-        // 입력 대기를 타임아웃 처리하기 위해 select() 사용
-        fd_set stReadFds;
-        struct timeval stTimeout;
-
+        pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
+        
         FD_ZERO(&stReadFds);
         FD_SET(STDIN_FILENO, &stReadFds);
 
-        stTimeout.tv_sec = 2;  // 1초 타임아웃
+        stTimeout.tv_sec = 1;  // 1초 타임아웃
         stTimeout.tv_usec = 0;
         int activity = select(STDIN_FILENO + 1, &stReadFds, NULL, NULL, &stTimeout);
         if (activity > 0 && FD_ISSET(STDIN_FILENO, &stReadFds)) {
@@ -66,21 +74,21 @@ void *sendMessages(void *sock) {
             achBuffer[strcspn(achBuffer, "\n")] = 0;
 
             if (strcmp(achBuffer, "exit") == 0) {
-                pthread_mutex_lock(&uRunningMutex);
-                g_iIsRunning = 0;
-                pthread_mutex_unlock(&uRunningMutex);
+                pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+                pstClientInfo->bIsRunning = false;
+                pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
+                printf("Client Exit\n");
                 break;
             }
 
-            if (write(iSock, achBuffer, strlen(achBuffer)) < 0) {
+            if (write(pstClientInfo->iSock, achBuffer, strlen(achBuffer)) < 0) {
                 perror("Write error");
-                pthread_mutex_lock(&uRunningMutex);
-                g_iIsRunning = 0;
-                pthread_mutex_unlock(&uRunningMutex);
+                pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+                pstClientInfo->bIsRunning = false;
+                pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
                 pthread_exit(NULL);
             }
-        }else{
-            printf("\n");
+            fprintf(stderr,"Enter message('exit' to quit): ");
         }
     }
 
@@ -94,61 +102,56 @@ void *sendMessages(void *sock) {
  * @param sock 서버 소켓 파일 디스크립터에 대한 포인터
  * @return void*
  */
-void *receiveMessages(void *sock) {
-    int iSock = *(int *)sock;
+void *receiveMessages(void *pvData) {
+    CLIENT_INFO* pstClientInfo = (CLIENT_INFO *)pvData;
     char achBuffer[BUFFER_SIZE];
 
     while (1) {
-        pthread_mutex_lock(&uRunningMutex);
-        if (!g_iIsRunning) {
-            pthread_mutex_unlock(&uRunningMutex);
+        pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+        if (!pstClientInfo->bIsRunning) {
+            pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
             break;
         }
-        pthread_mutex_unlock(&uRunningMutex);
+        pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
 
         // select()를 사용하여 소켓이 읽기 가능한지 확인
         fd_set stReadFds;
         struct timeval stTimeout;
 
         FD_ZERO(&stReadFds);
-        FD_SET(iSock, &stReadFds);
+        FD_SET(pstClientInfo->iSock, &stReadFds);
 
-        stTimeout.tv_sec = TIMEOUT_SEC;
-        stTimeout.tv_usec = 0;
+        stTimeout.tv_sec = 0;
+        stTimeout.tv_usec = 500*1000;
 
-        int activity = select(iSock + 1, &stReadFds, NULL, NULL, &stTimeout);
+        int activity = select(pstClientInfo->iSock + 1, &stReadFds, NULL, NULL, &stTimeout);
 
         if (activity < 0) {
             perror("Select error");
-            pthread_mutex_lock(&uRunningMutex);
-            g_iIsRunning = 0;
-            pthread_mutex_unlock(&uRunningMutex);
-            pthread_exit(NULL);
-        } else if (activity == 0) {
-            printf("No response from server for %d seconds. Timing out...\n", TIMEOUT_SEC);
-            pthread_mutex_lock(&uRunningMutex);
-            g_iIsRunning = 0;
-            pthread_mutex_unlock(&uRunningMutex);
-            pthread_exit(NULL);
-        }
-
-        if (FD_ISSET(iSock, &stReadFds)) {
-            int iReadSize = read(iSock, achBuffer, BUFFER_SIZE);
-            if (iReadSize > 0) {
-                achBuffer[iReadSize] = '\0';
-                printf("Server: %s\n", achBuffer);
-            } else if (iReadSize == 0) {
-                printf("Server disconnected.\n");
-                pthread_mutex_lock(&uRunningMutex);
-                g_iIsRunning = 0;
-                pthread_mutex_unlock(&uRunningMutex);
-                pthread_exit(NULL);
-            } else {
-                perror("Read error");
-                pthread_mutex_lock(&uRunningMutex);
-                g_iIsRunning = 0;
-                pthread_mutex_unlock(&uRunningMutex);
-                pthread_exit(NULL);
+            pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+            pstClientInfo->bIsRunning = false;
+            pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
+            break;
+        } else if (activity != 0) {            
+            if (FD_ISSET(pstClientInfo->iSock, &stReadFds)) {
+                memset(achBuffer, 0x0, BUFFER_SIZE);
+                int iReadSize = read(pstClientInfo->iSock, achBuffer, BUFFER_SIZE);
+                if (iReadSize > 0) {
+                    achBuffer[iReadSize] = '\0';
+                    printf("Server: %s\n", achBuffer);
+                } else if (iReadSize == 0) {
+                    printf("Server disconnected.\n");
+                    pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+                    pstClientInfo->bIsRunning = false;
+                    pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
+                    pthread_exit(NULL);
+                } else {
+                    perror("Read error");
+                    pthread_mutex_lock(&pstClientInfo->uRunningMutex);
+                    pstClientInfo->bIsRunning = false;
+                    pthread_mutex_unlock(&pstClientInfo->uRunningMutex);
+                    pthread_exit(NULL);
+                }
             }
         }
     }
@@ -157,35 +160,41 @@ void *receiveMessages(void *sock) {
 }
 
 int main() {
-    int iSock;
-    pthread_t sendThread, receiveThread;
+    CLIENT_INFO stClientInfo = {        \
+                .iSock = 0,             \
+                .bIsRunning = false,    \
+                .achBuffer = {0},       \
+                .recvThreadId = 0,      \
+                .sendThreadId = 0,      \
+                .uRunningMutex = PTHREAD_MUTEX_INITIALIZER  \
+            };
 
     while(1){
-        iSock = createTcpClientSocket(SERVER_IP, PORT);
-        if (iSock < 0) {
+        stClientInfo.iSock = createTcpClientSocket(SERVER_IP, PORT);
+        if (stClientInfo.iSock < 0) {
             printf("Failed to connect to server\n");
             return -1;
         }
-        g_iIsRunning = 1;
+        stClientInfo.bIsRunning = true;
 
         // 송신 및 수신 스레드 생성
-        if (pthread_create(&sendThread, NULL, sendMessages, (void *)&iSock) != 0) {
+        if (pthread_create(&stClientInfo.sendThreadId, NULL, sendMessages, (void *)&stClientInfo) != 0) {
             perror("Failed to create send thread");
-            close(iSock);
+            close(stClientInfo.iSock);
             return -1;
         }
 
-        if (pthread_create(&receiveThread, NULL, receiveMessages, (void *)&iSock) != 0) {
+        if (pthread_create(&stClientInfo.recvThreadId, NULL, receiveMessages, (void *)&stClientInfo) != 0) {
             perror("Failed to create receive thread");
-            close(iSock);
+            close(stClientInfo.iSock);
             return -1;
         }
 
         // 스레드가 종료될 때까지 대기
-        pthread_join(sendThread, NULL);
-        pthread_join(receiveThread, NULL);
+        pthread_join(stClientInfo.sendThreadId, NULL);
+        pthread_join(stClientInfo.recvThreadId, NULL);
 
-        close(iSock);
+        close(stClientInfo.iSock);
 
         // 다시 시도할지 여부 확인
         char retry;
